@@ -6,17 +6,7 @@ import matplotlib.pyplot as plt
 from ultralytics import YOLO
 from utils import process_frame, get_density
 
-
-st.markdown("""
-    <style>
-    html, body, [class*="css"]  {
-        font-family: 'Inter', sans-serif;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
-
-model = YOLO("yolov8n.pt")
+model = YOLO("yolov8n.pt", task='detect')
 
 st.set_page_config(page_title="Traffic Analyzer", layout="wide")
 st.title("Smart Traffic Analyzer System")
