@@ -11,7 +11,7 @@ st.set_page_config(page_title="Traffic Analyzer", layout="wide")
 st.title("Smart Traffic Analyzer System")
 
 # -----------------------------
-# Load Model (cached)
+# Load Model
 # -----------------------------
 @st.cache_resource
 def load_model():
@@ -27,7 +27,7 @@ video_file = st.sidebar.file_uploader("Upload Traffic Video", type=["mp4"])
 start = st.sidebar.button("Start Analysis")
 
 # -----------------------------
-# Main Logic
+# Main
 # -----------------------------
 if video_file and start:
 
@@ -44,13 +44,13 @@ if video_file and start:
     frame_counts = []
     total_vehicles = 0
 
-    frame_limit = 120   # keeps cloud stable
+    frame_limit = 120
     frame_idx = 0
 
     first_frame = None
 
     # -----------------------------
-    # PROCESS VIDEO (NO STREAMING)
+    # PROCESS VIDEO (SAFE)
     # -----------------------------
     while True:
         ret, frame = cap.read()
@@ -63,14 +63,31 @@ if video_file and start:
         if frame is None:
             continue
 
-        # Resize (faster + stable)
+        # Resize for performance
         frame = cv2.resize(frame, (640, 360))
 
-        # Save first frame for display
+        # Save ONE processed frame with bounding boxes
         if first_frame is None:
-            first_frame = frame.copy()
+            temp_frame = frame.copy()
 
-        # YOLO inference
+            try:
+                results = model(temp_frame)[0]
+
+                for box in results.boxes:
+                    label = results.names[int(box.cls[0])]
+
+                    if label in ['car', 'truck', 'bus', 'motorcycle']:
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
+                        cv2.rectangle(temp_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        cv2.putText(temp_frame, label, (x1, y1 - 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+                first_frame = temp_frame
+
+            except:
+                first_frame = frame.copy()
+
+        # YOLO detection (for counting only)
         try:
             results = model(frame)[0]
         except:
@@ -93,17 +110,16 @@ if video_file and start:
     cap.release()
 
     # -----------------------------
-    # SAFE DISPLAY SECTION
+    # DISPLAY
     # -----------------------------
-
     col1, col2 = st.columns([2, 1])
 
-    # Show only ONE safe frame
+    # Show processed frame (with boxes)
     if first_frame is not None:
         try:
             first_frame = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
             with col1:
-                st.image(first_frame, caption="Sample Frame", use_container_width=True)
+                st.image(first_frame, caption="Detected Vehicles", use_container_width=True)
         except:
             pass
 
