@@ -3,7 +3,6 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from ultralytics import YOLO
-import time
 
 # -----------------------------
 # Page Config
@@ -12,46 +11,13 @@ st.set_page_config(page_title="Traffic Analyzer", layout="wide")
 st.title("Smart Traffic Analyzer System")
 
 # -----------------------------
-# Load Model (safe)
+# Load Model (cached)
 # -----------------------------
 @st.cache_resource
 def load_model():
     return YOLO("yolov8n.pt")
 
 model = load_model()
-
-# -----------------------------
-# Processing Function
-# -----------------------------
-def process_frame(frame):
-    results = model(frame)[0]
-
-    counts = {'car': 0, 'truck': 0, 'bus': 0, 'motorcycle': 0}
-
-    for box in results.boxes:
-        cls = int(box.cls[0])
-        label = results.names[cls]
-
-        if label in counts:
-            counts[label] += 1
-
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame, label, (x1, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-    total = sum(counts.values())
-    return frame, counts, total
-
-
-def get_density(total):
-    if total < 5:
-        return "Low"
-    elif total < 15:
-        return "Medium"
-    else:
-        return "High"
-
 
 # -----------------------------
 # Sidebar
@@ -61,31 +27,31 @@ video_file = st.sidebar.file_uploader("Upload Traffic Video", type=["mp4"])
 start = st.sidebar.button("Start Analysis")
 
 # -----------------------------
-# Main
+# Main Logic
 # -----------------------------
 if video_file and start:
 
-    # Save file
+    # Save uploaded video
     with open("temp.mp4", "wb") as f:
         f.write(video_file.read())
 
     cap = cv2.VideoCapture("temp.mp4")
 
     if not cap.isOpened():
-        st.error("Cannot open video")
+        st.error("❌ Unable to open video")
         st.stop()
-
-    video_placeholder = st.empty()
-    col1, col2 = st.columns([2, 1])
 
     frame_counts = []
     total_vehicles = 0
 
-    frame_limit = 120
+    frame_limit = 120   # keeps cloud stable
     frame_idx = 0
 
-    start_time = time.time()
+    first_frame = None
 
+    # -----------------------------
+    # PROCESS VIDEO (NO STREAMING)
+    # -----------------------------
     while True:
         ret, frame = cap.read()
 
@@ -94,62 +60,83 @@ if video_file and start:
 
         frame_idx += 1
 
-        # Resize safely
+        if frame is None:
+            continue
+
+        # Resize (faster + stable)
         frame = cv2.resize(frame, (640, 360))
 
-        # Process
-        frame, counts, total = process_frame(frame)
+        # Save first frame for display
+        if first_frame is None:
+            first_frame = frame.copy()
 
+        # YOLO inference
+        try:
+            results = model(frame)[0]
+        except:
+            continue
+
+        counts = {'car': 0, 'truck': 0, 'bus': 0, 'motorcycle': 0}
+
+        try:
+            for box in results.boxes:
+                label = results.names[int(box.cls[0])]
+                if label in counts:
+                    counts[label] += 1
+        except:
+            continue
+
+        total = sum(counts.values())
         total_vehicles += total
         frame_counts.append(total)
-
-        # Convert BGR → RGB
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-        # GUARANTEED VALID DISPLAY
-        if isinstance(frame, np.ndarray) and frame.ndim == 3:
-
-            with col1:
-                video_placeholder.image(frame, channels="RGB", use_container_width=True)
-
-            with col2:
-                st.markdown("### 📊 Vehicle Stats")
-                st.metric("Cars", counts['car'])
-                st.metric("Bikes", counts['motorcycle'])
-                st.metric("Trucks", counts['truck'])
-                st.metric("Buses", counts['bus'])
-                st.metric("Total", total)
-
-                density = get_density(total)
-
-                st.markdown("### 🚦 Traffic Status")
-                if density == "High":
-                    st.error("🚨 HIGH TRAFFIC")
-                elif density == "Medium":
-                    st.warning("MODERATE TRAFFIC")
-                else:
-                    st.success("SMOOTH TRAFFIC")
-
-        # FPS
-        fps = 1 / (time.time() - start_time)
-        start_time = time.time()
-        st.sidebar.metric("FPS", f"{fps:.2f}")
 
     cap.release()
 
     # -----------------------------
+    # SAFE DISPLAY SECTION
+    # -----------------------------
+
+    col1, col2 = st.columns([2, 1])
+
+    # Show only ONE safe frame
+    if first_frame is not None:
+        try:
+            first_frame = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
+            with col1:
+                st.image(first_frame, caption="Sample Frame", use_container_width=True)
+        except:
+            pass
+
+    # Stats
+    with col2:
+        st.markdown("### 📊 Summary")
+        st.metric("Total Vehicles", total_vehicles)
+        st.metric("Frames Processed", len(frame_counts))
+
+        if len(frame_counts) > 0:
+            avg = int(np.mean(frame_counts))
+            st.metric("Avg Vehicles / Frame", avg)
+
+            if avg < 5:
+                st.success("✅ Low Traffic")
+            elif avg < 15:
+                st.warning("⚠️ Medium Traffic")
+            else:
+                st.error("🚨 High Traffic")
+
+    # -----------------------------
     # Graph
     # -----------------------------
-    if frame_counts:
+    if len(frame_counts) > 0:
         st.markdown("## 📈 Traffic Trend")
 
         fig, ax = plt.subplots()
         ax.plot(frame_counts)
         ax.set_xlabel("Frame")
         ax.set_ylabel("Vehicle Count")
-        st.pyplot(fig)
+        ax.set_title("Traffic Flow Analysis")
 
-    st.success(f"Total Vehicles Detected: {total_vehicles}")
+        st.pyplot(fig)
 
 else:
     st.info("Upload a video and click Start Analysis")
